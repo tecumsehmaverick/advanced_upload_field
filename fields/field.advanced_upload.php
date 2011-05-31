@@ -532,7 +532,7 @@
 			/**
 			 * Allow other extensions to manipulate saved files.
 			 *
-			 * @delegate PostProccessFile
+			 * @delegate PostProcessFile
 			 * @param string $context
 			 * '/extension/advanced_upload_field/'
 			 * @param array $data
@@ -540,7 +540,7 @@
 			 * @param integer $field_id
 			 */
 			Symphony::ExtensionManager()->notifyMembers(
-				'PostProccessFile',
+				'PostProcessFile',
 				'/extension/advanced_upload_field/',
 				array(
 					'data'		=> $data,
