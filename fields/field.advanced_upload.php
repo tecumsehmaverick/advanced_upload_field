@@ -1,11 +1,14 @@
 <?php
 
+	/**
+	 * @package advanced_upload_field
+	 */
+
 	if (!defined('__IN_SYMPHONY__')) die('<h2>Symphony Error</h2><p>You cannot directly access this file</p>');
 
-	class FieldUpload extends Field {
+	class FieldAdvanced_Upload extends Field {
 		protected $_mimes = array();
-		protected $Driver = null;
-		protected $Symphony = null;
+		protected $driver = null;
 
 	/*-------------------------------------------------------------------------
 		Definition:
@@ -14,17 +17,9 @@
 		public function __construct(&$parent) {
 			parent::__construct($parent);
 
-			if (class_exists('Administration')) {
-				$this->Symphony = Administration::instance();
-			}
+			$this->driver = Symphony::ExtensionManager()->create('advanced_upload_field');
 
-			else {
-				$this->Symphony = Frontend::instance();
-			}
-
-			$this->Driver = $this->Symphony->ExtensionManager->create('uploadfield');
-
-			$this->_name = 'Upload';
+			$this->_name = 'Advanced Upload';
 			$this->_required = true;
 			$this->_mimes = array(
 				'image'	=> array(
@@ -50,7 +45,7 @@
 		public function createTable() {
 			$field_id = $this->get('id');
 
-			return $this->Symphony->Database->query("
+			return Symphony::Database()->query("
 				CREATE TABLE IF NOT EXISTS `tbl_entries_data_{$field_id}` (
 					`id` INT(11) UNSIGNED NOT NULL AUTO_INCREMENT,
 					`entry_id` INT(11) UNSIGNED NOT NULL,
@@ -176,7 +171,13 @@
 			$this->buildValidationSelect($wrapper, $this->get('validator'), "fields[{$order}][validator]", 'upload');
 
 		// Serialise ----------------------------------------------------------
-
+			
+			$compact = new XMLElement('div');
+			$compact->setAttribute('class', 'compact');
+			
+			$this->appendRequiredCheckbox($compact);
+			$this->appendShowColumnCheckbox($compact);
+			
 			$label = Widget::Label();
 			$input = Widget::Input(
 				"fields[{$order}][serialise]", 'yes', 'checkbox'
@@ -185,10 +186,9 @@
 			if ($this->get('serialise') == 'yes') $input->setAttribute('checked', 'checked');
 
 			$label->setValue($input->generate() . ' ' . __('Serialise file names'));
-			$wrapper->appendChild($label);
+			$compact->appendChild($label);
 
-			$this->appendRequiredCheckbox($wrapper);
-			$this->appendShowColumnCheckbox($wrapper);
+			$wrapper->appendChild($compact);
 		}
 
 		public function commit() {
@@ -204,7 +204,7 @@
 				'serialise'		=> ($this->get('serialise') == 'yes' ? 'yes' : 'no')
 			);
 
-			$this->Symphony->Database->query("
+			Symphony::Database()->query("
 				DELETE FROM
 					`tbl_fields_{$handle}`
 				WHERE
@@ -212,7 +212,7 @@
 				LIMIT 1
 			");
 
-			return $this->Symphony->Database->insert($fields, "tbl_fields_{$handle}");
+			return Symphony::Database()->insert($fields, "tbl_fields_{$handle}");
 		}
 
 	/*-------------------------------------------------------------------------
@@ -220,7 +220,7 @@
 	-------------------------------------------------------------------------*/
 
 		public function displayPublishPanel(&$wrapper, $data = null, $error = null, $prefix = null, $postfix = null, $entry_id = null) {
-			$this->Driver->addHeaders($this->Symphony->Page);
+			$this->driver->addHeaders(Symphony::Engine()->Page);
 
 			if (!$error and !is_writable(DOCROOT . $this->get('destination') . '/')) {
 				$error = 'Destination folder, <code>'.$this->get('destination').'</code>, is not writable. Please check permissions.';
@@ -243,12 +243,21 @@
 				$details = new XMLElement('div');
 				$details->setAttribute('class', 'details');
 
-				###
-				# Delegate: UploadField_AppendMediaPreview
-				# Description: Allow other extensions to add media previews.
-				$this->Symphony->ExtensionManager->notifyMembers(
-					'UploadField_AppendMediaPreview',
-					'/publish/', array(
+				/**
+				 * Allow other extensions to add media previews.
+				 *
+				 * @delegate AppendMediaPreview
+				 * @param string $context
+				 * '/extension/advanced_upload_field/'
+				 * @param array $data
+				 * @param integer $entry_id
+				 * @param integer $field_id
+				 * @param XMLElement $wrapper
+				 */
+				Symphony::ExtensionManager()->notifyMembers(
+					'AppendMediaPreview',
+					'/extension/advanced_upload_field/',
+					array(
 						'data'		=> $data,
 						'entry_id'	=> $entry_id,
 						'field_id'	=> $this->get('id'),
@@ -497,7 +506,7 @@
 			if (!General::uploadFile(
 				DOCROOT . '/' . trim($this->get('destination'), '/'),
 				$data['name'], $data['tmp_name'],
-				$this->Symphony->Configuration->get('write_mode', 'file')
+				Symphony::Configuration()->get('write_mode', 'file')
 			)) {
 				$message = __(
 					'There was an error while trying to upload the file <code>%s</code> to the target directory <code>workspace/%s</code>.',
@@ -520,12 +529,20 @@
 				'meta'		=> serialize($this->getMetaInfo(WORKSPACE . $file, $data['type']))
 			);
 
-			###
-			# Delegate: UploadField_PostProccessFile
-			# Description: Allow other extensions to add media previews.
-			$this->Symphony->ExtensionManager->notifyMembers(
-				'UploadField_PostProccessFile',
-				'/publish/', array(
+			/**
+			 * Allow other extensions to manipulate saved files.
+			 *
+			 * @delegate PostProccessFile
+			 * @param string $context
+			 * '/extension/advanced_upload_field/'
+			 * @param array $data
+			 * @param integer $entry_id
+			 * @param integer $field_id
+			 */
+			Symphony::ExtensionManager()->notifyMembers(
+				'PostProccessFile',
+				'/extension/advanced_upload_field/',
+				array(
 					'data'		=> $data,
 					'entry_id'	=> $entry_id,
 					'field_id'	=> $this->get('id')
@@ -564,8 +581,11 @@
 		Output:
 	-------------------------------------------------------------------------*/
 
-		public function appendFormattedElement(&$wrapper, $data, $encode = false, $mode = null, $entry_id = null) {
+		public function appendFormattedElement($wrapper, $data, $encode = false, $mode = null, $entry_id = null) {
 			if (!$this->sanitizeDataArray($data)) return null;
+			
+			$path = str_replace(WORKSPACE, NULL, dirname(WORKSPACE . $data['file']));
+			$file = General::sanitize(basename($data['file']));
 
 			$item = new XMLElement($this->get('element_name'));
 			$item->setAttributeArray(array(
@@ -574,8 +594,8 @@
 				'name'	=> General::sanitize($data['name'])
 			));
 
-			$item->appendChild(new XMLElement('path', str_replace(WORKSPACE, NULL, dirname(WORKSPACE . $data['file']))));
-			$item->appendChild(new XMLElement('file', General::sanitize(basename($data['file']))));
+			$item->appendChild(new XMLElement('path', $path));
+			$item->appendChild(new XMLElement('file', $file));
 
 			$meta = unserialize($data['meta']);
 
@@ -583,12 +603,21 @@
 				$item->appendChild(new XMLElement('meta', null, $meta));
 			}
 
-			###
-			# Delegate: UploadField_AppendFormattedElement
-			# Description: Allow other extensions to add media previews.
-			$this->Symphony->ExtensionManager->notifyMembers(
-				'UploadField_AppendFormattedElement',
-				'/frontend/', array(
+			/**
+			 * Allow other extensions to extend XML output.
+			 *
+			 * @delegate AppendFormattedElement
+			 * @param string $context
+			 * '/extension/advanced_upload_field/'
+			 * @param array $data
+			 * @param integer $entry_id
+			 * @param integer $field_id
+			 * @param XMLElement $wrapper
+			 */
+			Symphony::ExtensionManager()->notifyMembers(
+				'AppendFormattedElement',
+				'/extension/advanced_upload_field/',
+				array(
 					'data'		=> $data,
 					'entry_id'	=> $entry_id,
 					'field_id'	=> $this->get('id'),
@@ -606,8 +635,9 @@
 				$link->setValue($data['name']);
 
 				return $link->generate();
-
-			} else {
+			}
+			
+			else {
 				$link = Widget::Anchor($data['name'], URL . '/workspace' . $data['file']);
 
 				return $link->generate();
